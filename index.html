@@ -322,8 +322,56 @@ const GI_DEFAULT={
 // ============================================================
 let forn, ordini, gruppi, waSel, waIntros, sc, selG, selForn;
 let _uid=1000; const uid=()=>`u${++_uid}_${Date.now()}`;
+// ── STORAGE: localStorage + IndexedDB (più persistente su Android/Chrome) ──
+const IDB_NAME = 'hibu-ordini-db';
+const IDB_STORE = 'kv';
+let _idb = null;
+
+function openIDB() {
+  return new Promise((resolve) => {
+    if (_idb) { resolve(_idb); return; }
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE);
+    req.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
+    req.onerror = () => resolve(null);
+  });
+}
+function idbSet(k, v) {
+  openIDB().then(db => {
+    if (!db) return;
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(JSON.stringify(v), k);
+  }).catch(() => {});
+}
+function idbGet(k) {
+  return openIDB().then(db => {
+    if (!db) return null;
+    return new Promise(resolve => {
+      const req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(k);
+      req.onsuccess = e => resolve(e.target.result ? JSON.parse(e.target.result) : null);
+      req.onerror = () => resolve(null);
+    });
+  }).catch(() => null);
+}
+
 function LS(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}}
-function SS(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
+function SS(k,v){
+  try{localStorage.setItem(k,JSON.stringify(v));}catch{}
+  idbSet(k, v); // salva anche in IndexedDB
+}
+
+// All'avvio: prova a recuperare da IndexedDB se localStorage è vuoto
+async function syncFromIDB() {
+  const keys = ['forn_v5','ord_v9','grp_v4','waSel_v2','waIntros_v2','sc_v2','selG_v2','selF_v2'];
+  for (const k of keys) {
+    if (!localStorage.getItem(k)) {
+      const val = await idbGet(k);
+      if (val !== null) {
+        try { localStorage.setItem(k, JSON.stringify(val)); } catch {}
+      }
+    }
+  }
+}
 
 function initState(){
   forn=LS("forn_v5",FI_DEFAULT);
@@ -895,12 +943,14 @@ function escQ(s){return String(s||"").replace(/\\/g,"\\\\").replace(/'/g,"\\'");
 // ============================================================
 //  INIT
 // ============================================================
-initState();
-initPalette();
-renderCal();
-// Restore screen
-if(sc==="forn"&&selForn){renderForn();}
-showScreen(sc||"cal");
+// Avvio: sincronizza da IDB poi inizializza
+syncFromIDB().then(() => {
+  initState();
+  initPalette();
+  renderCal();
+  if(sc==="forn"&&selForn){renderForn();}
+  showScreen(sc||"cal");
+});
 </script>
 
 <script>
